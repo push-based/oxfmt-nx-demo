@@ -99,5 +99,6 @@
       "style": "css"
     }
   },
-  "analytics": false
+  "analytics": false,
+  "defaultBase": "origin/main"
 }

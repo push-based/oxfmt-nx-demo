@@ -5,7 +5,8 @@
   "license": "MIT",
   "scripts": {
     "format": "node tools/scripts/format/format.mjs",
-    "format:check": "node tools/scripts/format/format.mjs --check",
+    "format:check": "node tools/scripts/format/format.mjs check --all",
+    "format:write": "node tools/scripts/format/format.mjs write --all",
     "format:oxfmt": "oxfmt .",
     "format:prettier": "prettier --write . --ignore-path .prettierignore --ignore-path .prettieronlyignore"
   },
@@ -78,5 +79,8 @@
     "vite": "8.0.9",
     "vite-tsconfig-paths": "^5.1.4",
     "vitest": "~4.1.0"
+  },
+  "engines": {
+    "node": ">=22.0.0"
   }
 }

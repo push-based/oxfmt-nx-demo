@@ -1,7 +1,9 @@
 # Git hooks for the oxfmt demo workspace.
 #
-# The hook hands its staged-file list to the router, which splits the list between
-# oxfmt and Prettier and skips whichever formatter has nothing to do.
+# The router reads the staged-file list from git itself (`--staged`) rather than taking it
+# as argv. Lefthook expands `{staged_files}` space-separated, which a single
+# `--files=a,b,c` argument cannot absorb once the shell has split it — `--staged` sidesteps
+# the quoting problem entirely. The `glob` below only decides *whether* the job runs.
 # See tools/scripts/format/format.mjs.
 #
 # Refer to https://lefthook.dev/configuration/ for all options.
@@ -21,5 +23,5 @@ pre-commit:
         - '*.md'
         - '*.yml'
         - '*.yaml'
-      run: node tools/scripts/format/format.mjs {staged_files}
+      run: node tools/scripts/format/format.mjs write --staged
       stage_fixed: true

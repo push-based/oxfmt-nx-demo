@@ -28,8 +28,8 @@ jobs:
       - run: yarn install --frozen-lockfile
 
       # The formatting gate this repository is about. On `main` this is Prettier
-      # over the whole workspace; on `oxfmt-hybrid` the same script routes files
-      # between oxfmt and Prettier.
+      # over the whole workspace; on `oxfmt-hybrid` the router splits files between
+      # oxfmt and Prettier. `format:check` is `format.mjs check --all`.
       - run: yarn format:check
 
       - run: npx nx run-many -t lint test build typecheck

@@ -1,130 +1,373 @@
-#!/usr/bin/env node
-/**
- * Hybrid format router: oxfmt for everything it can parse, Prettier for the rest.
- *
- * Why a script at all, when a whole-workspace run is just two commands?
- *
- *   1. Git hooks pass a list of staged files. That list has to be *split* between the
- *      two formatters, and each formatter has to be skipped when its half is empty —
- *      both tools treat an unmatched pattern as an error.
- *   2. The two tools share an ignore file. oxfmt reads `.prettierignore`, so
- *      Prettier-only exclusions have to be handed over separately with `--ignore-path`.
- *   3. Reporting. Knowing which formatter spent the wall-clock time is the only way to
- *      find out that Prettier's small tail of files costs more than oxfmt's long one.
- *
- * Usage:
- *   node tools/scripts/format/format.mjs                    # write, whole workspace
- *   node tools/scripts/format/format.mjs --check            # check, whole workspace
- *   node tools/scripts/format/format.mjs [--check] <paths…> # write/check a file list
- */
+import { execFileSync } from 'node:child_process';
+import { existsSync, readFileSync, statSync, globSync } from 'node:fs';
 
-import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
-import { performance } from 'node:perf_hooks';
-import { fileURLToPath } from 'node:url';
+const action = process.argv[2]; // "check" | "write"
+const extraArgs = process.argv.slice(3);
 
-const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
+if (!['check', 'write'].includes(action)) {
+  throw new Error('Action must be: check | write');
+}
 
-/**
- * Resolve a formatter from the workspace's own `node_modules/.bin`.
- *
- * `yarn format` puts that directory on PATH for free; a git hook does not. Without
- * this the hook dies with a bare ENOENT, which is a confusing way to find out that
- * your pre-commit formatter never ran.
- */
-const bin = (name) => {
-  const local = join(
-    repoRoot,
-    'node_modules',
-    '.bin',
-    process.platform === 'win32' ? `${name}.cmd` : name,
-  );
-  return existsSync(local) ? local : name;
-};
+// Every flag the script understands. Anything else is a typo and should fail
+// loudly, since the strategy is inferred from flags (an unrecognized flag would
+// otherwise silently fall through to the default "changed" mode).
+// Value-taking and boolean flags are listed together; the parser handles both.
+const KNOWN_FLAGS = new Set([
+  // selection strategies
+  'all',
+  'staged',
+  'files',
+  'paths',
+  // changed-family refinements
+  'base',
+  'head',
+  'uncommitted',
+  'untracked',
+  // accepted-and-ignored (nx parity)
+  'exclude',
+  'tui',
+]);
 
-/**
- * The split, in one predicate.
- *
- * oxfmt infers its parser from the file name and has no per-glob parser override yet
- * (oxc-project/oxc#17852). It reads `foo.component.html` as an Angular template and
- * every other `.html` as plain HTML — which silently flattens the indentation of
- * Angular control-flow blocks (`@if`, `@for`) in a template named anything else.
- *
- * So: component templates and all non-HTML source go to oxfmt; every other `.html`
- * goes to Prettier, which *can* be pointed at `parser: angular` by glob.
- *
- * Keep this in sync with the two config files that apply the same rule to
- * whole-workspace runs: `ignorePatterns` in `.oxfmtrc.json`, and `.prettieronlyignore`.
- */
-const isPrettierOwned = (file) =>
-  /\.html?$/i.test(file) && !/\.component\.html$/i.test(file);
-
-const argv = process.argv.slice(2);
-const check = argv.includes('--check');
-const paths = argv.filter((arg) => !arg.startsWith('-'));
-
-const run = (label, command, args) => {
-  const started = performance.now();
-  const { status, error } = spawnSync(command, args, {
-    stdio: 'inherit',
-    // Ignore paths in prettierArgs() are relative to the workspace root.
-    cwd: repoRoot,
-    shell: process.platform === 'win32',
-  });
-  const seconds = ((performance.now() - started) / 1000).toFixed(2);
-
-  if (error) {
-    console.error(`\n${label}: failed to start — ${error.message}`);
-    return { label, seconds, ok: false };
+// Throws on any --flag not in KNOWN_FLAGS. Only validates tokens that look like
+// long flags (start with "--"); bare values (e.g. a --tui's "false") are skipped.
+function assertKnownFlags() {
+  for (const arg of extraArgs) {
+    if (!arg.startsWith('--')) continue;
+    const name = arg.slice(2).split('=')[0];
+    if (!KNOWN_FLAGS.has(name)) {
+      throw new Error(
+        `Unknown flag: --${name}. Known flags: ${[...KNOWN_FLAGS].map((f) => `--${f}`).join(', ')}`,
+      );
+    }
   }
-  return { label, seconds, ok: status === 0 };
-};
+}
 
-const oxfmtArgs = (targets) => [
-  ...(check ? ['--check'] : []),
-  ...(targets.length ? targets : ['.']),
-];
+function readFlag(name) {
+  const eq = extraArgs.find((a) => a.startsWith(`--${name}=`));
+  if (eq) return eq.slice(name.length + 3);
 
-const prettierArgs = (targets) => [
-  check ? '--check' : '--write',
-  // `.prettierignore` is shared with oxfmt. Prettier-only rules live in the second file.
+  const idx = extraArgs.indexOf(`--${name}`);
+  if (
+    idx !== -1 &&
+    extraArgs[idx + 1] &&
+    !extraArgs[idx + 1].startsWith('--')
+  ) {
+    return extraArgs[idx + 1];
+  }
+  return undefined;
+}
+
+function hasFlag(name) {
+  return extraArgs.some((a) => a === `--${name}` || a.startsWith(`--${name}=`));
+}
+
+// Mirrors nx parseCSV: comma/space delimited, strips surrounding quotes.
+function parseCSV(value) {
+  if (!value) return [];
+  return value
+    .split(/[, ]+/)
+    .map((i) => i.trim())
+    .filter(Boolean)
+    .map((i) => (i.startsWith('"') && i.endsWith('"') ? i.slice(1, -1) : i));
+}
+
+// True if a string contains glob metacharacters.
+function isGlob(p) {
+  return /[*?[\]{}]/.test(p);
+}
+
+// Removes files that git considers ignored (respects root + nested .gitignore,
+// .git/info/exclude, and global excludes). Untracked-but-not-ignored files are
+// kept. Returns the input unchanged if git can't be consulted.
+function filterGitIgnored(files) {
+  if (files.length === 0) return files;
+  let ignored;
+  try {
+    const out = execFileSync('git', ['check-ignore', '--stdin'], {
+      input: files.join('\n'),
+      encoding: 'utf8',
+    });
+    ignored = new Set(
+      out
+        .split(/\r?\n/)
+        .map((s) => s.trim())
+        .filter(Boolean),
+    );
+  } catch (err) {
+    // git check-ignore exits 1 when NOTHING is ignored — that's not an error,
+    // it just means stdout is empty. Any other status: fail open (don't filter).
+    if (err?.status === 1 && typeof err.stdout === 'string') {
+      ignored = new Set(
+        err.stdout
+          .split(/\r?\n/)
+          .map((s) => s.trim())
+          .filter(Boolean),
+      );
+    } else {
+      return files;
+    }
+  }
+  return files.filter((f) => !ignored.has(f));
+}
+
+// Resolves a list of path specs (files, directories, or globs) into a flat
+// list of real files, then drops gitignored ones. Directories expand to their
+// full subtree; globs via globSync; plain files pass through. Unknown literal
+// paths throw.
+function resolvePaths(specs) {
+  const out = [];
+  for (const spec of specs) {
+    if (isGlob(spec)) {
+      out.push(...globSync(spec));
+      continue;
+    }
+    if (!existsSync(spec)) {
+      throw new Error(`Path not found: ${spec}`);
+    }
+    if (statSync(spec).isDirectory()) {
+      out.push(...globSync(`${spec}/**/*`));
+    } else {
+      out.push(spec);
+    }
+  }
+  const real = Array.from(new Set(out)).filter(
+    (f) => existsSync(f) && statSync(f).isFile(),
+  );
+  return filterGitIgnored(real);
+}
+
+function run(command, args) {
+  try {
+    execFileSync(command, args, {
+      stdio: 'inherit',
+      shell: process.platform === 'win32',
+    });
+    return true;
+  } catch (err) {
+    if (typeof err?.status !== 'number') {
+      throw err;
+    }
+    return false;
+  }
+}
+
+function gitCapture(args) {
+  return execFileSync('git', args, { encoding: 'utf8' })
+    .split(/\r?\n/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function gitCaptureSingle(args) {
+  return execFileSync('git', args, { encoding: 'utf8' }).trim();
+}
+
+// Mirrors nx getMergeBase: try merge-base, then --fork-point, else fall back to base.
+function getMergeBase(base, head = 'HEAD') {
+  try {
+    return gitCaptureSingle(['merge-base', base, head]);
+  } catch {
+    try {
+      return gitCaptureSingle(['merge-base', '--fork-point', base, head]);
+    } catch {
+      return base;
+    }
+  }
+}
+
+function getFilesUsingBaseAndHead(base, head) {
+  return gitCapture([
+    'diff',
+    '--name-only',
+    '--no-renames',
+    '--relative',
+    base,
+    head,
+  ]);
+}
+
+function getUncommittedFiles() {
+  return gitCapture([
+    'diff',
+    '--name-only',
+    '--no-renames',
+    '--relative',
+    'HEAD',
+    '.',
+  ]);
+}
+
+function getUntrackedFiles() {
+  return gitCapture(['ls-files', '--others', '--exclude-standard']);
+}
+
+// Mirrors nx getBaseRef: nxJson.defaultBase ?? nxJson.affected?.defaultBase ?? 'main'.
+function getBaseRef() {
+  try {
+    const nxJson = JSON.parse(readFileSync('nx.json', 'utf8'));
+    return nxJson.defaultBase ?? nxJson.affected?.defaultBase ?? 'main';
+  } catch {
+    return 'main';
+  }
+}
+
+// Returns the changed-file set for the "changed" family of flags.
+function getChangedFiles() {
+  if (hasFlag('uncommitted')) {
+    return getUncommittedFiles().filter((f) => existsSync(f));
+  }
+  if (hasFlag('untracked')) {
+    return getUntrackedFiles().filter((f) => existsSync(f));
+  }
+
+  let base = readFlag('base') ?? process.env.NX_BASE ?? getBaseRef();
+  const head = readFlag('head') ?? process.env.NX_HEAD;
+
+  base = getMergeBase(base, head ?? 'HEAD');
+
+  let files;
+  if (head) {
+    files = getFilesUsingBaseAndHead(base, head);
+  } else {
+    files = Array.from(
+      new Set([
+        ...getFilesUsingBaseAndHead(base, 'HEAD'),
+        ...getUncommittedFiles(),
+        ...getUntrackedFiles(),
+      ]),
+    );
+  }
+
+  return files.filter((f) => existsSync(f));
+}
+
+// Infers the selection strategy from the flags present, rejecting combinations
+// that span more than one mutually exclusive family. The "changed" family
+// (base/head/uncommitted/untracked) may combine internally.
+function resolveMode() {
+  const isAll = hasFlag('all');
+  const isStaged = hasFlag('staged');
+  const isFiles = readFlag('files') !== undefined;
+  const isPaths = readFlag('paths') !== undefined;
+  const isChanged =
+    hasFlag('base') ||
+    hasFlag('head') ||
+    hasFlag('uncommitted') ||
+    hasFlag('untracked');
+
+  const active = [];
+  if (isAll) active.push('all');
+  if (isStaged) active.push('staged');
+  if (isFiles) active.push('files');
+  if (isPaths) active.push('paths');
+  if (isChanged) active.push('changed');
+
+  if (active.length > 1) {
+    throw new Error(
+      `Conflicting selection flags (${active.join(
+        ', ',
+      )}). Use only one of: --all | --staged | --files | --paths | --base/--head/--uncommitted/--untracked.`,
+    );
+  }
+
+  return active[0] ?? 'changed';
+}
+
+// `--ignore-path` REPLACES prettier's defaults, so the defaults are named explicitly.
+// One argv entry per token: "--ignore-path <path>" as a single string is silently dropped.
+const PRETTIER_IGNORE_PATHS = [
+  '--ignore-path',
+  '.gitignore',
   '--ignore-path',
   '.prettierignore',
   '--ignore-path',
   '.prettieronlyignore',
-  // A staged-file list can contain anything, so don't fail on a file Prettier
-  // has no parser for.
-  ...(targets.length ? ['--ignore-unknown'] : []),
-  ...(targets.length ? targets : ['.']),
 ];
 
-const results = [];
-
-if (paths.length === 0) {
-  // Whole workspace: each tool's ignore configuration does the routing.
-  results.push(run('oxfmt', bin('oxfmt'), oxfmtArgs([])));
-  results.push(run('prettier', bin('prettier'), prettierArgs([])));
-} else {
-  const forPrettier = paths.filter(isPrettierOwned);
-  const forOxfmt = paths.filter((file) => !isPrettierOwned(file));
-
-  if (forOxfmt.length)
-    results.push(run('oxfmt', bin('oxfmt'), oxfmtArgs(forOxfmt)));
-  if (forPrettier.length) {
-    results.push(run('prettier', bin('prettier'), prettierArgs(forPrettier)));
-  }
-  if (results.length === 0) {
-    console.log('format: nothing to do');
-    process.exit(0);
-  }
+function partition(files) {
+  const prettierFiles = files.filter(
+    (file) => file.endsWith('.html') && !file.endsWith('.component.html'),
+  );
+  const oxfmtFiles = files.filter(
+    (file) => !file.endsWith('.html') || file.endsWith('.component.html'),
+  );
+  return { prettierFiles, oxfmtFiles };
 }
 
-const total = results.reduce((sum, r) => sum + Number(r.seconds), 0).toFixed(2);
-console.log(
-  `\n${check ? 'format:check' : 'format'} — ` +
-    results.map((r) => `${r.label} ${r.seconds}s`).join(', ') +
-    `, total ${total}s`,
-);
+// Runs prettier and oxfmt, aggregating success so one failure doesn't prevent
+// the other from running.
+function formatAll(prettierArgs, oxfmtArgs) {
+  const flag = action === 'check' ? '--check' : '--write';
+  let ok = true;
 
-process.exit(results.every((r) => r.ok) ? 0 : 1);
+  if (prettierArgs.length) {
+    ok =
+      run('yarn', [
+        'prettier',
+        ...PRETTIER_IGNORE_PATHS,
+        flag,
+        ...prettierArgs,
+      ]) && ok;
+  }
+  if (oxfmtArgs.length) {
+    // Don't fail when no file is oxfmt-formattable (e.g. only images/lockfiles); match nx's no-op.
+    ok =
+      run('yarn', [
+        'oxfmt',
+        '--no-error-on-unmatched-pattern',
+        flag,
+        ...oxfmtArgs,
+      ]) && ok;
+  }
+
+  return ok;
+}
+
+// Formats an explicit list of files via partition (prettier/oxfmt split).
+function formatFileList(files) {
+  if (files.length === 0) {
+    console.log('No files to format.');
+    process.exit(0);
+  }
+  const { prettierFiles, oxfmtFiles } = partition(files);
+  const ok = formatAll(prettierFiles, oxfmtFiles);
+  process.exit(ok ? 0 : 1);
+}
+
+assertKnownFlags();
+
+const mode = resolveMode();
+
+// "all": format the whole tree. prettier/oxfmt apply their own ignore configs
+// (.prettierignore / oxfmtrc), so no extra gitignore filtering is needed here.
+if (mode === 'all') {
+  const ok = formatAll(['**/*.html', '!**/*.component.html'], ['.']);
+  process.exit(ok ? 0 : 1);
+}
+
+// "paths": explicit files, directories, and/or globs (gitignored files dropped).
+if (mode === 'paths') {
+  const files = resolvePaths(parseCSV(readFlag('paths')));
+  formatFileList(files);
+}
+
+// "files": literal files only (nx-faithful, no dir/glob expansion).
+if (mode === 'files') {
+  const files = parseCSV(readFlag('files')).filter((f) => existsSync(f));
+  formatFileList(files);
+}
+
+// "staged": files staged in the index.
+if (mode === 'staged') {
+  const files = gitCapture([
+    'diff',
+    '--name-only',
+    '--no-renames',
+    '--relative',
+    '--cached',
+  ]).filter((f) => existsSync(f));
+  formatFileList(files);
+}
+
+// "changed" (explicit base/head/uncommitted/untracked, or bare default).
+formatFileList(getChangedFiles());
