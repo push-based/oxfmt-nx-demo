@@ -98,9 +98,9 @@ parser and indents the `@if` body; the other does not.
 
 ## Scope and honesty
 
-- The benchmark numbers in the case study (`3m 52s → 18.4s`, 23.5× on the engine) come from
-  a **private ~67,800-file monorepo**, not from this demo. This workspace is far too small
-  to reproduce them; it exists to make the _mechanism_ inspectable.
+- The benchmark numbers in the case study (`3m 52s → 18.4s`, 23.5× on the engine) were
+  measured on a **~67,800-file Angular workspace**, not on this demo. This one is far too
+  small to reproduce them; it exists to make the _mechanism_ inspectable.
 - oxfmt is pre-1.0 and moving fast. Behaviour described here was verified against
   **oxfmt 0.67.0**. Check the version pinned in `package.json` before trusting a detail.
 - Two upstream changes would shrink this setup considerably:
