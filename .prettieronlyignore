@@ -1,0 +1,32 @@
+# Ignore rules that apply to PRETTIER ONLY.
+#
+# oxfmt reads `.prettierignore` as well as `.gitignore`
+# (https://oxc.rs/docs/guide/usage/formatter/ignore-files.html), so `.prettierignore`
+# is now a SHARED file: anything listed there is invisible to both formatters. A rule
+# meant for one tool has to live somewhere the other tool does not read. This is that
+# file — Prettier gets it via `--ignore-path`, oxfmt never sees it.
+#
+# Everything below belongs to oxfmt. Listing it here is what stops `yarn format:prettier`
+# from walking in and reformatting the 98% of the workspace oxfmt owns.
+*.ts
+*.tsx
+*.mts
+*.cts
+*.js
+*.jsx
+*.mjs
+*.cjs
+*.json
+*.jsonc
+*.json5
+*.css
+*.scss
+*.less
+*.md
+*.markdown
+*.yml
+*.yaml
+
+# Angular component templates go to oxfmt too — the `.component.html` suffix is how
+# oxfmt knows to use its Angular parser. Prettier must not touch these either.
+*.component.html

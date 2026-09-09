@@ -1,12 +1,14 @@
 {
   "name": "oxfmt-nx-demo",
   "version": "0.0.0",
+  "private": true,
   "license": "MIT",
   "scripts": {
-    "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format": "node tools/scripts/format/format.mjs",
+    "format:check": "node tools/scripts/format/format.mjs --check",
+    "format:oxfmt": "oxfmt .",
+    "format:prettier": "prettier --write . --ignore-path .prettierignore --ignore-path .prettieronlyignore"
   },
-  "private": true,
   "dependencies": {
     "@angular-devkit/build-angular": "22.0.6",
     "@angular/common": "22.0.6",
@@ -31,7 +33,6 @@
     "@angular/compiler-cli": "22.0.6",
     "@angular/language-service": "22.0.6",
     "@eslint/js": "^9.8.0",
-    "@ianvs/prettier-plugin-sort-imports": "^4.7.1",
     "@nx/angular": "23.1.0",
     "@nx/devkit": "23.1.0",
     "@nx/docker": "23.1.0",
@@ -67,6 +68,7 @@
     "jsonc-eslint-parser": "^2.1.0",
     "lefthook": "^2.1.10",
     "nx": "23.1.0",
+    "oxfmt": "0.67.0",
     "prettier": "3.9.6",
     "supertest": "^7.1.4",
     "ts-node": "10.9.1",
