@@ -1,0 +1,10 @@
+<div class="error-container">
+  <div class="error-icon">⚠️</div>
+  <h3>{{ title() || 'Oops! Something went wrong' }}</h3>
+  <p>
+    {{ message() || 'An unexpected error occurred. Please try again later.' }}
+  </p>
+  @if (showRetry()) {
+    <button class="retry-button" (click)="retry.emit()">Try Again</button>
+  }
+</div>

@@ -1,0 +1,27 @@
+# Git hooks for the oxfmt demo workspace.
+#
+# Baseline (`main`): Prettier formats every staged file.
+# See the `oxfmt-hybrid` branch for the same hook split between oxfmt and Prettier.
+#
+# Refer to https://lefthook.dev/configuration/ for all options.
+
+pre-commit:
+  parallel: true
+  jobs:
+    - name: prettier
+      glob:
+        - '*.ts'
+        - '*.js'
+        - '*.mjs'
+        - '*.json'
+        - '*.html'
+        - '*.scss'
+        - '*.css'
+        - '*.md'
+        - '*.yml'
+        - '*.yaml'
+      # --ignore-unknown keeps the hook from failing on a file Prettier has no
+      # parser for. .prettierignore still applies to explicitly-passed paths,
+      # which is what keeps .yarn/releases (~4.9 MB) out of the workload.
+      run: npx prettier --write --ignore-unknown {staged_files}
+      stage_fixed: true

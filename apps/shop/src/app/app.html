@@ -1,0 +1,30 @@
+<header class="app-header">
+  <div class="container">
+    <h1>{{ title }}</h1>
+    <nav>
+      <a routerLink="/products" routerLinkActive="active">Products</a>
+    </nav>
+  </div>
+</header>
+
+<!--
+  This file is an Angular template with control-flow blocks, but it is NOT named
+  `*.component.html` — it is referenced by `templateUrl: './app.html'`.
+  That single fact is why this workspace still needs Prettier. See README.
+-->
+@if (showBanner()) {
+  <div class="app-banner">
+    <p>Free shipping on orders over $50.</p>
+  </div>
+}
+
+<main class="app-main">
+  <router-outlet></router-outlet>
+</main>
+
+<footer class="app-footer">
+  <div class="container">
+    <p>© 2025 Nx Shop Demo - Showcasing Nx Monorepo Features</p>
+    <p>Frontend (Angular) + Backend (Express) + Shared Libraries</p>
+  </div>
+</footer>

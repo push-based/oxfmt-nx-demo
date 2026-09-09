@@ -1,0 +1,11 @@
+# Add files here to ignore them from prettier formatting
+/dist
+/coverage
+/.nx/cache
+/.nx/workspace-data
+.angular
+
+# Vendored yarn CLI (~4.9 MB) — pinned via .yarnrc's yarn-path, not our source.
+/.yarn/releases
+
+.nx/self-healing

@@ -1,0 +1,87 @@
+<div class="product-list-container">
+  <header class="page-header">
+    <h1>Our Products</h1>
+    <p>Explore our wide selection of high-quality products</p>
+  </header>
+
+  <div class="filters-section">
+    <div class="search-box">
+      <input
+        type="text"
+        placeholder="Search products..."
+        [(ngModel)]="searchTerm"
+        (ngModelChange)="onSearchChange()"
+        class="search-input"
+      />
+    </div>
+
+    <div class="filter-controls">
+      <select
+        [(ngModel)]="selectedCategory"
+        (ngModelChange)="onFilterChange()"
+        class="filter-select"
+      >
+        <option value="">All Categories</option>
+        @for (category of categories(); track category) {
+          <option [value]="category">{{ category }}</option>
+        }
+      </select>
+
+      <label class="checkbox-label">
+        <input
+          type="checkbox"
+          [(ngModel)]="inStockOnly"
+          (ngModelChange)="onFilterChange()"
+        />
+        In Stock Only
+      </label>
+    </div>
+  </div>
+
+  @if (loading()) {
+    <shop-loading-spinner />
+  } @else if (error()) {
+    <shop-error-message
+      [message]="error() || undefined"
+      (retry)="loadProducts()"
+    />
+  } @else if (products().length === 0) {
+    <shop-empty-state
+      heading="No products match your filters"
+      message="Try a different category, or clear the in-stock filter."
+      actionLabel="Clear filters"
+      (action)="clearFilters()"
+    />
+  } @else {
+    <div class="results-info">
+      Showing {{ products().length }} of {{ totalProducts() }} products
+    </div>
+
+    <shop-product-grid
+      [products]="products()"
+      (productSelect)="onProductSelect($event)"
+    />
+
+    @if (hasMorePages()) {
+      <div class="pagination">
+        <button
+          class="btn-secondary"
+          [disabled]="currentPage() === 1"
+          (click)="previousPage()"
+        >
+          Previous
+        </button>
+        <span class="page-info">
+          Page {{ currentPage() }} of {{ totalPages() }}
+        </span>
+        <button
+          class="btn-secondary"
+          [disabled]="currentPage() === totalPages()"
+          (click)="nextPage()"
+        >
+          Next
+        </button>
+      </div>
+    }
+  }
+</div>
