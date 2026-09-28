@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, statSync, globSync } from 'node:fs';
+import { existsSync, globSync, readFileSync, statSync } from 'node:fs';
 
 const action = process.argv[2]; // "check" | "write"
 const extraArgs = process.argv.slice(3);

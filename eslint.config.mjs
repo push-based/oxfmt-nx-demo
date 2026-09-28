@@ -52,7 +52,16 @@ export default [
       '**/*.cjs',
       '**/*.mjs',
     ],
-    // Override or add rules here
-    rules: {},
+    rules: {
+      // oxfmt's sortImports orders import *statements* but leaves the named specifiers
+      // inside each one alone (that half belongs to oxlint in the Oxc split). This core
+      // ESLint rule covers the gap: ignoreDeclarationSort leaves statement order to oxfmt,
+      // ignoreCase matches the case-insensitive order @ianvs/prettier-plugin-sort-imports
+      // used to produce. Swap for oxlint's `eslint/sort-imports` once oxlint is adopted.
+      'sort-imports': [
+        'error',
+        { ignoreDeclarationSort: true, ignoreCase: true },
+      ],
+    },
   },
 ];

@@ -75,16 +75,10 @@ Angular templates. `.prettierrc` does that by path — `apps/**/*.html` and
 you still have to use it, and a template that lands outside those globs gets the plain
 HTML parser with no warning.
 
-## The three traps, with repros
-
-Each is reproducible in a scratch directory in under a minute. No clone required.
-
-### 1. oxfmt picks its HTML parser by filename
-
-This is the reason Prettier is still in the dependency tree.
+## Why Prettier is still in the tree: oxfmt picks its HTML parser by filename
 
 ```bash
-mkdir /tmp/t1 && cd /tmp/t1
+mkdir /tmp/t0 && cd /tmp/t0
 cat > ng.html <<'EOF'
 <div [class.active]="isActive">
 @if (loading) {   <p>{{ msg }}</p>   }
@@ -108,9 +102,47 @@ can be told `parser: angular` for an arbitrary glob — oxfmt cannot yet
 In this workspace the file that trips it is
 [`apps/shop/src/app/app.html`](apps/shop/src/app/app.html) — an Angular template with
 `@if`, wired up by `templateUrl: './app.html'`, and therefore not named `.component.html`.
-Real repositories are full of these.
+Real repositories are full of these. That one file is why two formatters share this tree.
 
-### 2. Import sorting moves comments that must not move
+## The three migration traps, with repros
+
+The routing above is the design. These three are what bit us while building it. Each one
+has a fixture in this repo and a scratch-directory repro you can paste without cloning.
+
+### 1. Ignore conflict: oxfmt reads `.prettierignore` too
+
+oxfmt honours `.prettierignore` as well as `.gitignore`
+([docs](https://oxc.rs/docs/guide/usage/formatter/ignore-files.html)). The moment both
+tools are installed, that file is shared, and a rule meant for Prettier alone silently
+hides files from oxfmt as well.
+
+```bash
+mkdir /tmp/t1 && cd /tmp/t1
+printf 'const  a = 1\n' > vendor.ts
+printf 'const  b = 2\n' > app.ts
+printf 'vendor.ts\n' > .prettierignore     # meant for Prettier only
+echo '{}' > .oxfmtrc.json
+npx --yes oxfmt@0.67.0 --check .            # oxfmt skips vendor.ts as well
+```
+
+```
+Format issues found in above 1 files.       <- only app.ts; vendor.ts is invisible to oxfmt
+```
+
+The fix is a second file that only Prettier reads, handed over with `--ignore-path`:
+
+```bash
+mv .prettierignore .prettieronlyignore
+npx --yes oxfmt@0.67.0 --check .                                      # now 2 files
+npx --yes prettier@3.9.6 --check . --ignore-path .prettieronlyignore  # still skips vendor.ts
+```
+
+**Fixture:** [`.prettieronlyignore`](.prettieronlyignore) — every extension oxfmt owns,
+which is what stops a standalone `yarn format:prettier` from reformatting 99% of the
+workspace behind oxfmt's back. See "What the two ignore files are actually for" below for
+the `--ignore-path` wrinkle that makes the wiring non-obvious.
+
+### 2. Import sorting: comments that must not move, and specifiers that don't get sorted
 
 `.oxfmtrc.json` sets `sortImports`, oxfmt's native replacement for
 `@ianvs/prettier-plugin-sort-imports` (which oxfmt cannot load — it is a Prettier plugin).
@@ -124,41 +156,72 @@ cat > cfg.mts <<'EOF'
 /// <reference types="vitest" />
 import { defineConfig } from 'vite';
 import angular from '@analogjs/vite-plugin-angular';
-export default defineConfig({});
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import { z } from 'zod';
+export default defineConfig({ angular, z });
 EOF
 echo '{"sortImports":{}}' > .oxfmtrc.json
 npx --yes oxfmt@0.67.0 cfg.mts && cat cfg.mts
 ```
 
 ```
+/* eslint-disable @typescript-eslint/no-explicit-any */   <- travelled to the top with `zod`
+import { z } from "zod";
 import angular from "@analogjs/vite-plugin-angular";
-/// <reference types="vitest" />        <- no longer line 1; the types are silently gone
+/// <reference types="vitest" />                          <- no longer line 1; the types are silently gone
 import { defineConfig } from "vite";
 ```
 
-`partitionByComment: true` fixes it — a comment becomes a partition boundary, so the
-directive stays put and the imports sort below it:
+`partitionByComment: true` fixes both — a comment becomes a partition boundary, so every
+import sorts only within its own comment-delimited group and the directives stay where they
+were written:
 
 ```bash
 echo '{"sortImports":{"partitionByComment":true}}' > .oxfmtrc.json
 npx --yes oxfmt@0.67.0 cfg.mts && cat cfg.mts
 ```
 
-**It does not fix everything.** A _block_ comment sitting directly on top of an import
-still travels with it, even with the switch on:
+**Fixtures:** [`.oxfmtrc.json`](.oxfmtrc.json) carries the switch;
+[`legacy-price.mapper.ts`](packages/shop/data/src/lib/mappers/legacy-price.mapper.ts) is
+the file whose first-line `eslint-disable` it protects.
 
+**What `sortImports` does not do:** it orders import _statements_ but leaves the named
+specifiers inside each one alone. `import { zeta, alpha, Mid }` stays in that order.
+Specifier sorting belongs to oxlint in the Oxc split; until oxlint is adopted here, the
+core ESLint `sort-imports` rule covers the gap with `ignoreDeclarationSort: true` (so it
+never fights oxfmt over statement order) and `ignoreCase: true` (so the order matches what
+the Prettier plugin used to produce). **Fixture:** [`eslint.config.mjs`](eslint.config.mjs).
+
+### 3. Replacing `nx format`: the wrapper goes with the formatter
+
+`nx format` runs one formatter. The moment two have to coexist it is out, and its file
+selection — `--all`, `--base`/`--head`, `--files`, `--uncommitted`, `--untracked`, the
+changed-since-base default — goes with it. What looked like a formatter swap turned into
+rebuilding that wrapper.
+
+**Fixture:** [`tools/scripts/format/format.mjs`](tools/scripts/format/format.mjs), with
+its flag table in [`tools/scripts/format/README.md`](tools/scripts/format/README.md). It
+re-implements the same selection strategies, resolves the base ref the way Nx does
+(`NX_BASE`, then `nx.json`'s `defaultBase`, through a merge-base lookup), accepts and
+ignores `--exclude` and `--tui` so existing invocations keep working, exits 0 on an empty
+selection, and folds both tools' exit codes into one so CI still fails on a single
+unformatted file.
+
+**Repro of why it is still needed on Nx 23.2:** Nx 23.2 detects oxfmt from
+`.oxfmtrc.json` and runs it natively, but still runs exactly one formatter. With this
+repo's `ignorePatterns`, oxfmt skips the non-component template and nothing else picks it
+up:
+
+```bash
+printf '<div>\n@if (x) {   <p>hi</p>   }\n</div>\n' >> apps/shop/src/app/app.html
+npx nx format:check --all; echo "exit $?"     # exit 0 — the unformatted template passed
+yarn format:check; echo "exit $?"             # exit 1 — the router sent it to Prettier
+git checkout -- apps/shop/src/app/app.html
 ```
-import angular from "@analogjs/vite-plugin-angular";
-/* eslint-disable @typescript-eslint/no-explicit-any */   <- moved down
-import { z } from "zod";
-```
 
-The fix is a blank line, which detaches the comment from the import below it. That is why
-[`legacy-price.mapper.ts`](packages/shop/data/src/lib/mappers/legacy-price.mapper.ts) has
-one, and why that blank line is load-bearing rather than cosmetic. Worth a lint rule or a
-grep in CI if your repo has many file-level `eslint-disable` blocks.
+## Two more things that bit us
 
-### 3. `internalPattern` takes prefixes, not regexes
+### `internalPattern` takes prefixes, not regexes
 
 `sortImports.internalPattern` is what separates your workspace packages from third-party
 ones. The documented default (`["~/", "@/", "#"]`) looks regex-ish enough that writing
@@ -210,12 +273,6 @@ loaded. Nothing broke, because `partition()` was already routing correctly; the 
 simply decorative. Worth knowing that a formatter will take an ignore file it never reads
 and say almost nothing about it.
 
-One more asymmetry worth knowing: oxfmt walks **nested `.gitignore`** files the way Git
-does; Prettier only consults the root ignore file. At case-study scale that difference alone
-removed ~1,060 files from the formatting workload — build output and vendored code Prettier
-had been reformatting for years because it sat behind a `.gitignore` deeper in the tree.
-Worth checking for on any repo big enough to have grown nested ignore files.
-
 ## Expect a one-time churn commit
 
 Swapping engines reformats code, even with `printWidth` matched to Prettier's. In this
@@ -240,19 +297,27 @@ different diff depending on which patch release you installed.
 
 ## Scope and honesty
 
-- The benchmark numbers in the case study (`3m 52s → 18.4s`, 23.5× on the engine) were
-  measured on a **~67,800-file Angular workspace**, not on this demo. This one formats in
-  about a second either way; it exists to make the _mechanism_ inspectable, not the speedup.
+- The benchmark numbers in the case study were measured on a **~68,500-file Angular
+  workspace**, not on this demo. Whole-workspace check: `nx format` (Prettier) 4m 34s →
+  hybrid script 17.8s, **15.4×**; whole-workspace write: 5m 09s → 49.8s, **6.2×**. The
+  engine alone, Prettier vs oxfmt called directly with no Nx and no routing: **26×** on the
+  workspace check. All medians of 3 runs from one session on 2026-09-10, Nx measured
+  cold-graph (`nx reset` before every timed run), every file forced dirty so both setups
+  did real work. This demo formats in about a second either way; it exists to make the
+  _mechanism_ inspectable, not the speedup.
 - `format.mjs` here is that workspace's script, so the commands above are the benchmarked
-  commands. The **versions differ**: the benchmarks ran on **oxfmt 0.55.0**, this repo pins
-  **0.67.0**. Twelve minor releases of a pre-1.0 formatter is not a no-op — treat the
-  timings as belonging to 0.55.0 and the behaviour described here as belonging to 0.67.0.
+  commands. The benchmarks ran on **oxfmt 0.55.0**;
+  this repo pins **0.67.0**. oxfmt is pre-1.0 and moving fast — treat the timings as
+  belonging to the benchmarked version and the behaviour described here as belonging to 0.67.0.
 - `oxfmt --migrate=prettier` generates a starting `.oxfmtrc.json` from an existing Prettier
   config. It gets you the format options, not the routing.
-- Two upstream changes would collapse most of this setup:
-  [Nx #35089](https://github.com/nrwl/nx/pull/35089) (native oxfmt support in `nx format`)
-  and [oxc #17852](https://github.com/oxc-project/oxc/issues/17852) (parser overrides —
-  which would delete trap 1, and with it the need for Prettier at all).
+- [Nx #35089](https://github.com/nrwl/nx/pull/35089) shipped in **Nx 23.2**: `nx format`
+  now detects oxfmt from your config. It replaces the file-selection half of `format.mjs`
+  but not the routing half — Nx still runs one formatter per workspace (see trap 3). The
+  change that would retire the script entirely is still open:
+  [oxc #17852](https://github.com/oxc-project/oxc/issues/17852), parser overrides. Once
+  oxfmt can be told to treat an arbitrary glob as an Angular template, Prettier leaves the
+  tree and `nx format` takes the whole job back.
 
 ## The Nx workspace itself
 
