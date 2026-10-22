@@ -9,12 +9,13 @@ import {
 /**
  * Inline template and styles on purpose.
  *
- * Angular's `template:` is an *untagged* template literal, so neither oxfmt nor
- * Prettier reformats the HTML inside it — they both treat it as opaque string
- * content in a TS file. That makes this file the third routing case:
+ * Angular's `template:` is an *untagged* template literal, so oxfmt does not
+ * reformat the HTML inside it (nor did Prettier) — it is opaque string content
+ * in a TS file. With `associations` routing every template to oxfmt, this is
+ * the one case that is still nobody's:
  *
- *   *.component.html  → oxfmt
- *   plain *.html       → Prettier
+ *   *.component.html  → oxfmt (by filename)
+ *   plain *.html       → oxfmt (by `associations`)
  *   inline template    → neither
  *
  * See tools/scripts/format/format.mjs.

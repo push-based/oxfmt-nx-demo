@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - oxfmt-hybrid
+      - oxfmt-associations
   pull_request:
 
 permissions:
@@ -29,7 +30,8 @@ jobs:
 
       # The formatting gate this repository is about. On `main` this is Prettier
       # over the whole workspace; on `oxfmt-hybrid` the router splits files between
-      # oxfmt and Prettier. `format:check` is `format.mjs check --all`.
+      # oxfmt and Prettier; on `oxfmt-associations` it is `nx format:check --all`
+      # with oxfmt as the only formatter.
       - run: yarn format:check
 
       - run: npx nx run-many -t lint test build typecheck

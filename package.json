@@ -4,11 +4,9 @@
   "private": true,
   "license": "MIT",
   "scripts": {
-    "format": "node tools/scripts/format/format.mjs",
-    "format:check": "node tools/scripts/format/format.mjs check --all",
-    "format:write": "node tools/scripts/format/format.mjs write --all",
-    "format:oxfmt": "oxfmt .",
-    "format:prettier": "prettier --write . --ignore-path .prettierignore --ignore-path .prettieronlyignore"
+    "format": "nx format:write",
+    "format:check": "nx format:check --all",
+    "format:write": "nx format:write --all"
   },
   "dependencies": {
     "@angular-devkit/build-angular": "22.0.6",
@@ -62,15 +60,13 @@
     "angular-eslint": "22.1.0",
     "esbuild": "^0.27.0",
     "eslint": "^9.8.0",
-    "eslint-config-prettier": "^10.0.0",
     "eslint-plugin-playwright": "^1.6.2",
     "jiti": "2.4.2",
     "jsdom": "~22.1.0",
     "jsonc-eslint-parser": "^2.1.0",
     "lefthook": "^2.1.10",
     "nx": "23.2.1",
-    "oxfmt": "0.67.0",
-    "prettier": "3.9.6",
+    "oxfmt": "0.74.0",
     "supertest": "^7.1.4",
     "ts-node": "10.9.1",
     "tslib": "^2.3.0",

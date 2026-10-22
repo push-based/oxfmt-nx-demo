@@ -1,10 +1,8 @@
 # Git hooks for the oxfmt demo workspace.
 #
-# The router reads the staged-file list from git itself (`--staged`) rather than taking it
-# as argv. Lefthook expands `{staged_files}` space-separated, which a single
-# `--files=a,b,c` argument cannot absorb once the shell has split it — `--staged` sidesteps
-# the quoting problem entirely. The `glob` below only decides *whether* the job runs.
-# See tools/scripts/format/format.mjs.
+# One formatter now, so the hook calls it directly on the staged files. The `glob`
+# below only decides *whether* the job runs; oxfmt's own config decides how each
+# file is parsed (see `associations` in .oxfmtrc.json).
 #
 # Refer to https://lefthook.dev/configuration/ for all options.
 
@@ -23,5 +21,5 @@ pre-commit:
         - '*.md'
         - '*.yml'
         - '*.yaml'
-      run: node tools/scripts/format/format.mjs write --staged
+      run: npx oxfmt --write {staged_files}
       stage_fixed: true

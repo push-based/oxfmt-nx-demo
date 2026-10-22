@@ -13,5 +13,12 @@
     "internalPattern": ["@org/"],
     "partitionByComment": true
   },
-  "ignorePatterns": ["*.html", "!*.component.html"]
+  "ignorePatterns": [".yarn/releases"],
+  "associations": [
+    {
+      "files": ["**/*.html"],
+      "excludeFiles": ["**/index.html", "**/public/**", "**/templates/**"],
+      "language": "angular-html"
+    }
+  ]
 }
